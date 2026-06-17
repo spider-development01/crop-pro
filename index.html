@@ -90,8 +90,8 @@
     <!-- MAIN MENU -->
     <div id="main-menu">
         <p>Select your role:</p>
-        <button class="btn-primary" onclick="startAdmin()">Admin (Monitor PC)</button>
-        <button class="btn-secondary" onclick="startCamera()">Camera (Field Phone)</button>
+        <button class="btn-primary" onclick="startAdmin()">Admin Panel</button>
+        <button class="btn-secondary" onclick="showCameraUI()">Field Phone</button>
     </div>
 
     <!-- ADMIN VIEW -->
@@ -103,7 +103,6 @@
         
         <div class="settings-panel">
             <label>NVIDIA NIM API Key:</label>
-            <!-- Feel free to put value="nvapi-..." in the line below to save your key permanently -->
             <input type="password" id="nvidia-key" placeholder="nvapi-..." value="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">
             
             <label>ntfy.sh Topic Name:</label>
@@ -125,11 +124,11 @@
     <!-- CAMERA VIEW -->
     <div id="camera-view" class="hidden">
         <h2>Field Camera</h2>
-        <p>Connection Code:</p>
+        <p>Persistent Room Code:</p>
         <input type="number" id="room-code" class="code-input" value="2099" readonly>
         <br>
-        <button class="btn-primary" onclick="connectToAdmin()">Connect Camera</button>
-        <p id="camera-status"></p>
+        <button id="start-cam-btn" class="btn-primary" onclick="startCameraMode()">Turn On Camera</button>
+        <p id="camera-status">Ready to start.</p>
         
         <video id="local-video" autoplay playsinline muted></video>
     </div>
@@ -142,6 +141,10 @@
     
     // Constant Room Code
     const ROOM_CODE = "2099";
+
+    // Auto-reconnect variables for Camera
+    let isConnectedToAdmin = false;
+    let isConnecting = false;
 
     // --- UI HELPER ---
     function showSection(id) {
@@ -158,14 +161,15 @@
         logs.scrollTop = logs.scrollHeight;
     }
 
-    // --- ADMIN LOGIC ---
+    // ==========================================
+    //               ADMIN LOGIC
+    // ==========================================
     function startAdmin() {
         showSection('admin-view');
 
-        // Initialize PeerJS with the fixed ID
         peer = new Peer('crop-admin-' + ROOM_CODE);
 
-        peer.on('open', id => logToAdmin('Admin ready. Waiting for phone on code 2099...'));
+        peer.on('open', id => logToAdmin('Admin ready. Listening on code 2099...'));
 
         peer.on('connection', conn => {
             dataConnection = conn;
@@ -173,7 +177,7 @@
         });
 
         peer.on('call', call => {
-            call.answer();
+            call.answer(); // Auto-answer any incoming video
             call.on('stream', remoteStream => {
                 const remoteVideo = document.getElementById('remote-video');
                 remoteVideo.srcObject = remoteStream;
@@ -184,10 +188,9 @@
             });
         });
 
-        // In case the fixed ID is already in use by someone else on PeerJS
         peer.on('error', err => {
             if(err.type === 'unavailable-id') {
-                alert("Error: Room 2099 is currently busy. Please try again in a moment.");
+                alert("Room 2099 is currently busy. Please try again in a moment.");
                 logToAdmin("Error: Room ID 2099 is taken right now.");
             }
         });
@@ -202,7 +205,9 @@
         }
     }
 
-    // --- AI VISION LOGIC (Runs on Admin PC) ---
+    // ==========================================
+    //           AI VISION LOGIC
+    // ==========================================
     function toggleAI() {
         const apiKey = document.getElementById('nvidia-key').value.trim();
         const ntfyTopic = document.getElementById('ntfy-topic').value.trim();
@@ -226,7 +231,6 @@
             btn.classList.replace('btn-warning', 'btn-danger');
             logToAdmin("AI Monitoring Started. Analyzing every 2s...");
             
-            // Run every 2 seconds
             aiInterval = setInterval(() => processFrame(apiKey, ntfyTopic), 2000);
         }
     }
@@ -236,18 +240,17 @@
         const canvas = document.getElementById('snapshot-canvas');
         const context = canvas.getContext('2d');
 
-        if (video.videoWidth === 0) return;
+        if (video.videoWidth === 0) return; // Skip if no video feed
 
         canvas.width = 640; 
         canvas.height = 480;
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
         const base64Image = canvas.toDataURL('image/jpeg', 0.5);
-
         logToAdmin("Analyzing frame...");
 
         try {
-            // Uses the Netlify _redirects proxy path to prevent CORS errors!
+            // Uses Netlify _redirects Proxy
             const response = await fetch("/nvidia-api/v1/chat/completions", {
                 method: "POST",
                 headers: {
@@ -276,15 +279,12 @@
             logToAdmin(`AI Result: ${aiAnswer}`);
 
             if (aiAnswer.includes("yes")) {
-                logToAdmin("🦅 BIRD DETECTED! Sending Notification & Triggering Alarm...");
+                logToAdmin("🦅 BIRD DETECTED! Triggering Alarm...");
                 
                 fetch(`https://ntfy.sh/${ntfyTopic}`, {
                     method: "POST",
                     body: "🦅 Alert: Bird detected in the field!",
-                    headers: {
-                        "Title": "Crop Protection Alert",
-                        "Tags": "bird,warning"
-                    }
+                    headers: { "Title": "Crop Protection Alert", "Tags": "bird,warning" }
                 });
 
                 sendRingCommand();
@@ -292,18 +292,22 @@
 
         } catch (err) {
             logToAdmin(`Error: ${err.message}`);
-            console.error(err);
         }
     }
 
-    // --- CAMERA (PHONE) LOGIC ---
-    function startCamera() {
+    // ==========================================
+    //      CAMERA (PHONE) RECONNECT LOGIC
+    // ==========================================
+    function showCameraUI() {
         showSection('camera-view');
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
 
-    async function connectToAdmin() {
+    async function startCameraMode() {
+        // Hide the button after clicked
+        document.getElementById('start-cam-btn').classList.add('hidden');
         document.getElementById('camera-status').innerText = "Accessing camera...";
+        
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
         try {
             localStream = await navigator.mediaDevices.getUserMedia({
@@ -312,31 +316,68 @@
             });
 
             document.getElementById('local-video').srcObject = localStream;
-            document.getElementById('camera-status').innerText = "Connecting to Admin...";
-
+            
             peer = new Peer();
 
             peer.on('open', id => {
-                const adminId = 'crop-admin-' + ROOM_CODE;
-                dataConnection = peer.connect(adminId);
+                document.getElementById('camera-status').innerText = "Camera active. Looking for Admin...";
                 
-                dataConnection.on('open', () => {
-                    document.getElementById('camera-status').innerText = "Connected! Streaming live.";
-                });
+                // Attempt to connect immediately, then repeat every 3 seconds
+                attemptReconnect();
+                setInterval(attemptReconnect, 3000); 
+            });
 
-                dataConnection.on('data', data => {
-                    if (data === 'RING') playBirdScareSound();
-                });
-
-                peer.call(adminId, localStream);
+            // If the Admin is offline, PeerJS throws a 'peer-unavailable' error
+            peer.on('error', err => {
+                if (err.type === 'peer-unavailable') {
+                    isConnectedToAdmin = false;
+                    isConnecting = false;
+                    document.getElementById('camera-status').innerText = "Admin offline. Waiting for Admin to open...";
+                }
             });
 
         } catch (err) {
-            alert("Camera access denied or unavailable. Ensure HTTPS.");
+            alert("Camera access denied. Ensure you are using HTTPS.");
         }
     }
 
-    // --- BIRD DETERRENT AUDIO ENGINE ---
+    // This function acts as a heartbeat. It constantly checks if Admin is there.
+    function attemptReconnect() {
+        // If already connected or currently trying to connect, do nothing.
+        if (isConnectedToAdmin || isConnecting) return;
+
+        isConnecting = true;
+        const adminId = 'crop-admin-' + ROOM_CODE;
+        
+        let tempConn = peer.connect(adminId, { reliable: true });
+
+        // If connection is successful
+        tempConn.on('open', () => {
+            isConnecting = false;
+            isConnectedToAdmin = true;
+            dataConnection = tempConn;
+            document.getElementById('camera-status').innerText = "Connected! Streaming live to Admin.";
+            
+            // Send the video stream ONLY after data connection is secured
+            peer.call(adminId, localStream);
+        });
+
+        // Listen for the Admin pressing "RING"
+        tempConn.on('data', data => {
+            if (data === 'RING') playBirdScareSound();
+        });
+
+        // If the Admin refreshes or closes the page, this triggers
+        tempConn.on('close', () => {
+            isConnectedToAdmin = false;
+            isConnecting = false;
+            document.getElementById('camera-status').innerText = "Admin disconnected. Waiting to reconnect...";
+        });
+    }
+
+    // ==========================================
+    //      BIRD DETERRENT AUDIO ENGINE
+    // ==========================================
     function playBirdScareSound() {
         if (!audioCtx) return;
         if (audioCtx.state === 'suspended') audioCtx.resume();
