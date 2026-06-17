@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crop Protection System</title>
+    <!-- Include PeerJS for Peer-to-Peer connection -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            text-align: center;
+            background-color: #1e1e1e;
+            color: white;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #2d2d2d;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+        button {
+            padding: 15px 30px;
+            font-size: 18px;
+            margin: 10px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            transition: 0.3s;
+        }
+        .btn-primary { background-color: #4CAF50; color: white; }
+        .btn-primary:hover { background-color: #45a049; }
+        .btn-secondary { background-color: #2196F3; color: white; }
+        .btn-secondary:hover { background-color: #1976D2; }
+        .btn-danger { background-color: #f44336; color: white; width: 100%; font-size: 24px; margin-top: 20px;}
+        .btn-danger:hover { background-color: #d32f2f; }
+        
+        input {
+            padding: 15px;
+            font-size: 24px;
+            text-align: center;
+            width: 150px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+        
+        video {
+            width: 100%;
+            border-radius: 8px;
+            background: #000;
+            margin-top: 20px;
+        }
+        
+        .hidden { display: none; }
+        #code-display { font-size: 48px; color: #4CAF50; letter-spacing: 5px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🌾 Crop Protection</h1>
+    
+    <!-- MAIN MENU -->
+    <div id="main-menu">
+        <p>Select your role:</p>
+        <button class="btn-primary" onclick="startAdmin()">Admin (Monitor)</button>
+        <button class="btn-secondary" onclick="startCamera()">Camera (Field Phone)</button>
+    </div>
+
+    <!-- ADMIN VIEW -->
+    <div id="admin-view" class="hidden">
+        <h2>Admin Panel</h2>
+        <p>Enter this code on the field phone:</p>
+        <h1 id="code-display">----</h1>
+        <p id="admin-status">Waiting for camera connection...</p>
+        
+        <video id="remote-video" autoplay playsinline></video>
+        <button id="ring-btn" class="btn-danger hidden" onclick="sendRingCommand()">🔔 RING BIRD ALARM</button>
+    </div>
+
+    <!-- CAMERA VIEW -->
+    <div id="camera-view" class="hidden">
+        <h2>Field Camera</h2>
+        <p>Enter the 4-digit code from the Admin screen:</p>
+        <input type="number" id="room-code" placeholder="1234" max="9999">
+        <br>
+        <button class="btn-primary" onclick="connectToAdmin()">Connect Camera</button>
+        <p id="camera-status"></p>
+        
+        <!-- Local preview -->
+        <video id="local-video" autoplay playsinline muted></video>
+    </div>
+</div>
+
+<script>
+    let peer;
+    let dataConnection;
+    let localStream;
+    let audioCtx;
+
+    // --- UI HELPER ---
+    function showSection(id) {
+        document.getElementById('main-menu').classList.add('hidden');
+        document.getElementById('admin-view').classList.add('hidden');
+        document.getElementById('camera-view').classList.add('hidden');
+        document.getElementById(id).classList.remove('hidden');
+    }
+
+    // --- ADMIN LOGIC ---
+    function startAdmin() {
+        showSection('admin-view');
+        const code = Math.floor(1000 + Math.random() * 9000).toString();
+        document.getElementById('code-display').innerText = code;
+
+        // Initialize PeerJS with a specific ID based on the code
+        peer = new Peer('crop-admin-' + code);
+
+        peer.on('open', id => {
+            console.log('Admin ready with ID:', id);
+        });
+
+        // Listen for incoming data connection (for the Ring button)
+        peer.on('connection', conn => {
+            dataConnection = conn;
+            document.getElementById('admin-status').innerText = "Phone connected! Waiting for video...";
+        });
+
+        // Listen for incoming video call
+        peer.on('call', call => {
+            call.answer(); // Answer the call automatically
+            call.on('stream', remoteStream => {
+                const remoteVideo = document.getElementById('remote-video');
+                remoteVideo.srcObject = remoteStream;
+                document.getElementById('admin-status').innerText = "Live stream active.";
+                document.getElementById('ring-btn').classList.remove('hidden');
+            });
+        });
+    }
+
+    function sendRingCommand() {
+        if (dataConnection && dataConnection.open) {
+            dataConnection.send('RING');
+            alert("Alarm triggered in the field!");
+        } else {
+            alert("No active connection to the phone.");
+        }
+    }
+
+    // --- CAMERA (PHONE) LOGIC ---
+    function startCamera() {
+        showSection('camera-view');
+        // Pre-initialize AudioContext (requires user gesture, which clicking "Camera" satisfies)
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
+    async function connectToAdmin() {
+        const code = document.getElementById('room-code').value;
+        if (code.length !== 4) {
+            alert("Please enter a valid 4-digit code.");
+            return;
+        }
+
+        document.getElementById('camera-status').innerText = "Accessing camera...";
+
+        try {
+            // Get rear camera video
+            localStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "environment" },
+                audio: false // No audio to prevent echo
+            });
+
+            document.getElementById('local-video').srcObject = localStream;
+            document.getElementById('camera-status').innerText = "Connecting to Admin...";
+
+            peer = new Peer();
+
+            peer.on('open', id => {
+                const adminId = 'crop-admin-' + code;
+
+                // 1. Establish Data Connection (for receiving the "RING" command)
+                dataConnection = peer.connect(adminId);
+                dataConnection.on('open', () => {
+                    document.getElementById('camera-status').innerText = "Connected! Streaming live.";
+                });
+
+                dataConnection.on('data', data => {
+                    if (data === 'RING') {
+                        playBirdScareSound();
+                    }
+                });
+
+                // 2. Call the admin with the video stream
+                peer.call(adminId, localStream);
+            });
+
+            peer.on('error', err => {
+                document.getElementById('camera-status').innerText = "Error: " + err.type;
+            });
+
+        } catch (err) {
+            alert("Camera access denied or unavailable. Make sure you are using HTTPS.");
+            console.error(err);
+        }
+    }
+
+    // --- BIRD DETERRENT AUDIO ENGINE ---
+    function playBirdScareSound() {
+        if (!audioCtx) return;
+        
+        // Resume context if suspended
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+
+        // High pitch harsh sound (Square wave at 4000Hz is extremely unpleasant to birds)
+        oscillator.type = 'square';
+        oscillator.frequency.setValueAtTime(4000, audioCtx.currentTime); 
+        
+        // Modulate frequency to make it sound like a loud siren
+        oscillator.frequency.exponentialRampToValueAtTime(6000, audioCtx.currentTime + 0.5);
+        oscillator.frequency.exponentialRampToValueAtTime(4000, audioCtx.currentTime + 1);
+        oscillator.frequency.exponentialRampToValueAtTime(6000, audioCtx.currentTime + 1.5);
+        oscillator.frequency.exponentialRampToValueAtTime(4000, audioCtx.currentTime + 2);
+
+        // Max volume
+        gainNode.gain.setValueAtTime(1, audioCtx.currentTime);
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        oscillator.start();
+        
+        // Stop after 3 seconds
+        oscillator.stop(audioCtx.currentTime + 3);
+    }
+</script>
+
+</body>
+</html>
