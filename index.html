@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crop Protection System</title>
+    <title>AI Crop Protection System</title>
     <!-- Include PeerJS for Peer-to-Peer connection -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
@@ -16,7 +16,7 @@
             padding: 20px;
         }
         .container {
-            max-width: 600px;
+            max-width: 700px;
             margin: 0 auto;
             background: #2d2d2d;
             padding: 30px;
@@ -24,9 +24,9 @@
             box-shadow: 0 4px 15px rgba(0,0,0,0.5);
         }
         button {
-            padding: 15px 30px;
-            font-size: 18px;
-            margin: 10px;
+            padding: 12px 24px;
+            font-size: 16px;
+            margin: 8px;
             cursor: pointer;
             border: none;
             border-radius: 5px;
@@ -37,38 +37,61 @@
         .btn-primary:hover { background-color: #45a049; }
         .btn-secondary { background-color: #2196F3; color: white; }
         .btn-secondary:hover { background-color: #1976D2; }
-        .btn-danger { background-color: #f44336; color: white; width: 100%; font-size: 24px; margin-top: 20px;}
+        .btn-danger { background-color: #f44336; color: white; }
         .btn-danger:hover { background-color: #d32f2f; }
+        .btn-warning { background-color: #ff9800; color: white; }
+        .btn-warning:hover { background-color: #f57c00; }
         
         input {
-            padding: 15px;
-            font-size: 24px;
-            text-align: center;
-            width: 150px;
+            padding: 10px;
+            font-size: 16px;
+            margin: 5px 0 15px 0;
+            width: calc(100% - 24px);
             border-radius: 5px;
             border: 1px solid #ccc;
         }
+        .code-input { width: 150px; font-size: 24px; text-align: center; }
         
         video {
             width: 100%;
             border-radius: 8px;
             background: #000;
-            margin-top: 20px;
+            margin-top: 15px;
         }
         
         .hidden { display: none; }
-        #code-display { font-size: 48px; color: #4CAF50; letter-spacing: 5px; }
+        #code-display { font-size: 48px; color: #4CAF50; letter-spacing: 5px; margin: 10px 0; }
+        
+        .settings-panel {
+            background: #3d3d3d;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            text-align: left;
+        }
+        .log-panel {
+            background: #111;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            height: 100px;
+            overflow-y: auto;
+            text-align: left;
+            font-size: 12px;
+            color: #00ff00;
+            margin-top: 15px;
+        }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>🌾 Crop Protection</h1>
+    <h1>🌾 AI Crop Protection</h1>
     
     <!-- MAIN MENU -->
     <div id="main-menu">
         <p>Select your role:</p>
-        <button class="btn-primary" onclick="startAdmin()">Admin (Monitor)</button>
+        <button class="btn-primary" onclick="startAdmin()">Admin (Monitor PC)</button>
         <button class="btn-secondary" onclick="startCamera()">Camera (Field Phone)</button>
     </div>
 
@@ -79,29 +102,43 @@
         <h1 id="code-display">----</h1>
         <p id="admin-status">Waiting for camera connection...</p>
         
+        <div class="settings-panel">
+            <label>NVIDIA NIM API Key:</label>
+            <input type="password" id="nvidia-key" placeholder="nvapi-..." value="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">
+            
+            <label>ntfy.sh Topic Name:</label>
+            <input type="text" id="ntfy-topic" placeholder="e.g., my_farm_alerts_123" value="crop_proton">
+            
+            <div style="text-align: center; margin-top: 10px;">
+                <button id="ai-btn" class="btn-warning hidden" onclick="toggleAI()">🤖 Start AI Monitoring</button>
+            </div>
+        </div>
+
         <video id="remote-video" autoplay playsinline></video>
-        <button id="ring-btn" class="btn-danger hidden" onclick="sendRingCommand()">🔔 RING BIRD ALARM</button>
+        <canvas id="snapshot-canvas" class="hidden"></canvas>
+        
+        <button id="ring-btn" class="btn-danger hidden" onclick="sendRingCommand()">🔔 MANUAL ALARM</button>
+
+        <div class="log-panel" id="ai-logs">System initialized. Waiting for video stream...<br></div>
     </div>
 
     <!-- CAMERA VIEW -->
     <div id="camera-view" class="hidden">
         <h2>Field Camera</h2>
         <p>Enter the 4-digit code from the Admin screen:</p>
-        <input type="number" id="room-code" placeholder="1234" max="9999">
+        <input type="number" id="room-code" class="code-input" placeholder="1234" max="9999">
         <br>
         <button class="btn-primary" onclick="connectToAdmin()">Connect Camera</button>
         <p id="camera-status"></p>
         
-        <!-- Local preview -->
         <video id="local-video" autoplay playsinline muted></video>
     </div>
 </div>
 
 <script>
-    let peer;
-    let dataConnection;
-    let localStream;
-    let audioCtx;
+    let peer, dataConnection, localStream, audioCtx;
+    let aiInterval = null;
+    let isAIActive = false;
 
     // --- UI HELPER ---
     function showSection(id) {
@@ -111,33 +148,37 @@
         document.getElementById(id).classList.remove('hidden');
     }
 
+    function logToAdmin(msg) {
+        const logs = document.getElementById('ai-logs');
+        const time = new Date().toLocaleTimeString();
+        logs.innerHTML += `[${time}] ${msg}<br>`;
+        logs.scrollTop = logs.scrollHeight;
+    }
+
     // --- ADMIN LOGIC ---
     function startAdmin() {
         showSection('admin-view');
         const code = Math.floor(1000 + Math.random() * 9000).toString();
         document.getElementById('code-display').innerText = code;
 
-        // Initialize PeerJS with a specific ID based on the code
         peer = new Peer('crop-admin-' + code);
 
-        peer.on('open', id => {
-            console.log('Admin ready with ID:', id);
-        });
+        peer.on('open', id => logToAdmin('Admin ready. Waiting...'));
 
-        // Listen for incoming data connection (for the Ring button)
         peer.on('connection', conn => {
             dataConnection = conn;
             document.getElementById('admin-status').innerText = "Phone connected! Waiting for video...";
         });
 
-        // Listen for incoming video call
         peer.on('call', call => {
-            call.answer(); // Answer the call automatically
+            call.answer();
             call.on('stream', remoteStream => {
                 const remoteVideo = document.getElementById('remote-video');
                 remoteVideo.srcObject = remoteStream;
                 document.getElementById('admin-status').innerText = "Live stream active.";
                 document.getElementById('ring-btn').classList.remove('hidden');
+                document.getElementById('ai-btn').classList.remove('hidden');
+                logToAdmin('Live video connected.');
             });
         });
     }
@@ -145,33 +186,127 @@
     function sendRingCommand() {
         if (dataConnection && dataConnection.open) {
             dataConnection.send('RING');
-            alert("Alarm triggered in the field!");
+            logToAdmin("Alarm triggered in the field!");
         } else {
             alert("No active connection to the phone.");
+        }
+    }
+
+    // --- AI VISION LOGIC (Runs on Admin PC) ---
+    function toggleAI() {
+        const apiKey = document.getElementById('nvidia-key').value.trim();
+        const ntfyTopic = document.getElementById('ntfy-topic').value.trim();
+
+        if (!apiKey || !ntfyTopic) {
+            alert("Please enter both the NVIDIA API Key and ntfy.sh Topic!");
+            return;
+        }
+
+        const btn = document.getElementById('ai-btn');
+
+        if (isAIActive) {
+            clearInterval(aiInterval);
+            isAIActive = false;
+            btn.innerText = "🤖 Start AI Monitoring";
+            btn.classList.replace('btn-danger', 'btn-warning');
+            logToAdmin("AI Monitoring Stopped.");
+        } else {
+            isAIActive = true;
+            btn.innerText = "⏹ Stop AI Monitoring";
+            btn.classList.replace('btn-warning', 'btn-danger');
+            logToAdmin("AI Monitoring Started. Analyzing every 2s...");
+            
+            // Run every 2 seconds
+            aiInterval = setInterval(() => processFrame(apiKey, ntfyTopic), 2000);
+        }
+    }
+
+    async function processFrame(apiKey, ntfyTopic) {
+        const video = document.getElementById('remote-video');
+        const canvas = document.getElementById('snapshot-canvas');
+        const context = canvas.getContext('2d');
+
+        // Check if video is playing
+        if (video.videoWidth === 0) return;
+
+        // Scale down image to save API bandwidth and processing time
+        canvas.width = 640; 
+        canvas.height = 480;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // Convert frame to base64 jpeg
+        const base64Image = canvas.toDataURL('image/jpeg', 0.5);
+
+        logToAdmin("Analyzing frame...");
+
+        try {
+            // Call NVIDIA NIM using Llama 3.2 11B Vision Instruct
+            const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${apiKey}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    model: "meta/llama-3.2-11b-vision-instruct",
+                    messages: [{
+                        role: "user",
+                        content: [
+                            { type: "text", text: "Is there a bird in this image? Reply with ONLY the word 'yes' or 'no'." },
+                            { type: "image_url", image_url: { url: base64Image } }
+                        ]
+                    }],
+                    max_tokens: 10,
+                    temperature: 0.1
+                })
+            });
+
+            if (!response.ok) throw new Error("API Error: " + response.statusText);
+
+            const data = await response.json();
+            const aiAnswer = data.choices[0].message.content.trim().toLowerCase();
+
+            logToAdmin(`AI Result: ${aiAnswer}`);
+
+            if (aiAnswer.includes("yes")) {
+                logToAdmin("🦅 BIRD DETECTED! Sending Notification & Triggering Alarm...");
+                
+                // 1. Send ntfy.sh notification
+                fetch(`https://ntfy.sh/${ntfyTopic}`, {
+                    method: "POST",
+                    body: "🦅 Alert: Bird detected in the field!",
+                    headers: {
+                        "Title": "Crop Protection Alert",
+                        "Tags": "bird,warning"
+                    }
+                });
+
+                // 2. Automatically trigger the scare alarm
+                sendRingCommand();
+            }
+
+        } catch (err) {
+            logToAdmin(`Error: ${err.message}`);
+            console.error(err);
         }
     }
 
     // --- CAMERA (PHONE) LOGIC ---
     function startCamera() {
         showSection('camera-view');
-        // Pre-initialize AudioContext (requires user gesture, which clicking "Camera" satisfies)
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
 
     async function connectToAdmin() {
         const code = document.getElementById('room-code').value;
-        if (code.length !== 4) {
-            alert("Please enter a valid 4-digit code.");
-            return;
-        }
+        if (code.length !== 4) return alert("Please enter a valid 4-digit code.");
 
         document.getElementById('camera-status').innerText = "Accessing camera...";
 
         try {
-            // Get rear camera video
             localStream = await navigator.mediaDevices.getUserMedia({
                 video: { facingMode: "environment" },
-                audio: false // No audio to prevent echo
+                audio: false
             });
 
             document.getElementById('local-video').srcObject = localStream;
@@ -181,64 +316,43 @@
 
             peer.on('open', id => {
                 const adminId = 'crop-admin-' + code;
-
-                // 1. Establish Data Connection (for receiving the "RING" command)
                 dataConnection = peer.connect(adminId);
+                
                 dataConnection.on('open', () => {
                     document.getElementById('camera-status').innerText = "Connected! Streaming live.";
                 });
 
                 dataConnection.on('data', data => {
-                    if (data === 'RING') {
-                        playBirdScareSound();
-                    }
+                    if (data === 'RING') playBirdScareSound();
                 });
 
-                // 2. Call the admin with the video stream
                 peer.call(adminId, localStream);
             });
 
-            peer.on('error', err => {
-                document.getElementById('camera-status').innerText = "Error: " + err.type;
-            });
-
         } catch (err) {
-            alert("Camera access denied or unavailable. Make sure you are using HTTPS.");
-            console.error(err);
+            alert("Camera access denied or unavailable. Ensure HTTPS.");
         }
     }
 
     // --- BIRD DETERRENT AUDIO ENGINE ---
     function playBirdScareSound() {
         if (!audioCtx) return;
-        
-        // Resume context if suspended
-        if (audioCtx.state === 'suspended') {
-            audioCtx.resume();
-        }
+        if (audioCtx.state === 'suspended') audioCtx.resume();
 
         const oscillator = audioCtx.createOscillator();
         const gainNode = audioCtx.createGain();
 
-        // High pitch harsh sound (Square wave at 4000Hz is extremely unpleasant to birds)
         oscillator.type = 'square';
         oscillator.frequency.setValueAtTime(4000, audioCtx.currentTime); 
-        
-        // Modulate frequency to make it sound like a loud siren
         oscillator.frequency.exponentialRampToValueAtTime(6000, audioCtx.currentTime + 0.5);
         oscillator.frequency.exponentialRampToValueAtTime(4000, audioCtx.currentTime + 1);
         oscillator.frequency.exponentialRampToValueAtTime(6000, audioCtx.currentTime + 1.5);
         oscillator.frequency.exponentialRampToValueAtTime(4000, audioCtx.currentTime + 2);
 
-        // Max volume
         gainNode.gain.setValueAtTime(1, audioCtx.currentTime);
-
         oscillator.connect(gainNode);
         gainNode.connect(audioCtx.destination);
-
         oscillator.start();
-        
-        // Stop after 3 seconds
         oscillator.stop(audioCtx.currentTime + 3);
     }
 </script>
