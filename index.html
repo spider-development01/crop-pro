@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Crop Protection System</title>
-    <!-- Include PeerJS for Peer-to-Peer connection -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         body {
@@ -50,7 +49,7 @@
             border-radius: 5px;
             border: 1px solid #ccc;
         }
-        .code-input { width: 150px; font-size: 24px; text-align: center; }
+        .code-input { width: 150px; font-size: 24px; text-align: center; font-weight: bold; background-color: #eee; color: #333;}
         
         video {
             width: 100%;
@@ -98,16 +97,17 @@
     <!-- ADMIN VIEW -->
     <div id="admin-view" class="hidden">
         <h2>Admin Panel</h2>
-        <p>Enter this code on the field phone:</p>
-        <h1 id="code-display">----</h1>
+        <p>Room Code:</p>
+        <h1 id="code-display">2099</h1>
         <p id="admin-status">Waiting for camera connection...</p>
         
         <div class="settings-panel">
             <label>NVIDIA NIM API Key:</label>
-            <input type="password" id="nvidia-key" placeholder="nvapi-..." value="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">
+            <!-- Feel free to put value="nvapi-..." in the line below to save your key permanently -->
+            <input type="password" id="nvidia-key" placeholder="nvapi-...">
             
             <label>ntfy.sh Topic Name:</label>
-            <input type="text" id="ntfy-topic" placeholder="e.g., my_farm_alerts_123" value="crop_proton">
+            <input type="text" id="ntfy-topic" placeholder="e.g., my_farm_alerts_123">
             
             <div style="text-align: center; margin-top: 10px;">
                 <button id="ai-btn" class="btn-warning hidden" onclick="toggleAI()">🤖 Start AI Monitoring</button>
@@ -125,8 +125,8 @@
     <!-- CAMERA VIEW -->
     <div id="camera-view" class="hidden">
         <h2>Field Camera</h2>
-        <p>Enter the 4-digit code from the Admin screen:</p>
-        <input type="number" id="room-code" class="code-input" placeholder="1234" max="9999">
+        <p>Connection Code:</p>
+        <input type="number" id="room-code" class="code-input" value="2099" readonly>
         <br>
         <button class="btn-primary" onclick="connectToAdmin()">Connect Camera</button>
         <p id="camera-status"></p>
@@ -139,6 +139,9 @@
     let peer, dataConnection, localStream, audioCtx;
     let aiInterval = null;
     let isAIActive = false;
+    
+    // Constant Room Code
+    const ROOM_CODE = "2099";
 
     // --- UI HELPER ---
     function showSection(id) {
@@ -158,12 +161,11 @@
     // --- ADMIN LOGIC ---
     function startAdmin() {
         showSection('admin-view');
-        const code = Math.floor(1000 + Math.random() * 9000).toString();
-        document.getElementById('code-display').innerText = code;
 
-        peer = new Peer('crop-admin-' + code);
+        // Initialize PeerJS with the fixed ID
+        peer = new Peer('crop-admin-' + ROOM_CODE);
 
-        peer.on('open', id => logToAdmin('Admin ready. Waiting...'));
+        peer.on('open', id => logToAdmin('Admin ready. Waiting for phone on code 2099...'));
 
         peer.on('connection', conn => {
             dataConnection = conn;
@@ -180,6 +182,14 @@
                 document.getElementById('ai-btn').classList.remove('hidden');
                 logToAdmin('Live video connected.');
             });
+        });
+
+        // In case the fixed ID is already in use by someone else on PeerJS
+        peer.on('error', err => {
+            if(err.type === 'unavailable-id') {
+                alert("Error: Room 2099 is currently busy. Please try again in a moment.");
+                logToAdmin("Error: Room ID 2099 is taken right now.");
+            }
         });
     }
 
@@ -226,21 +236,18 @@
         const canvas = document.getElementById('snapshot-canvas');
         const context = canvas.getContext('2d');
 
-        // Check if video is playing
         if (video.videoWidth === 0) return;
 
-        // Scale down image to save API bandwidth and processing time
         canvas.width = 640; 
         canvas.height = 480;
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // Convert frame to base64 jpeg
         const base64Image = canvas.toDataURL('image/jpeg', 0.5);
 
         logToAdmin("Analyzing frame...");
 
         try {
-            // Call NVIDIA NIM using Llama 3.2 11B Vision Instruct
+            // Uses the Netlify _redirects proxy path to prevent CORS errors!
             const response = await fetch("/nvidia-api/v1/chat/completions", {
                 method: "POST",
                 headers: {
@@ -271,7 +278,6 @@
             if (aiAnswer.includes("yes")) {
                 logToAdmin("🦅 BIRD DETECTED! Sending Notification & Triggering Alarm...");
                 
-                // 1. Send ntfy.sh notification
                 fetch(`https://ntfy.sh/${ntfyTopic}`, {
                     method: "POST",
                     body: "🦅 Alert: Bird detected in the field!",
@@ -281,7 +287,6 @@
                     }
                 });
 
-                // 2. Automatically trigger the scare alarm
                 sendRingCommand();
             }
 
@@ -298,9 +303,6 @@
     }
 
     async function connectToAdmin() {
-        const code = document.getElementById('room-code').value;
-        if (code.length !== 4) return alert("Please enter a valid 4-digit code.");
-
         document.getElementById('camera-status').innerText = "Accessing camera...";
 
         try {
@@ -315,7 +317,7 @@
             peer = new Peer();
 
             peer.on('open', id => {
-                const adminId = 'crop-admin-' + code;
+                const adminId = 'crop-admin-' + ROOM_CODE;
                 dataConnection = peer.connect(adminId);
                 
                 dataConnection.on('open', () => {
