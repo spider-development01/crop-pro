@@ -241,7 +241,7 @@
 
         try {
             // Call NVIDIA NIM using Llama 3.2 11B Vision Instruct
-            const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+            const response = await fetch("/nvidia-api/v1/chat/completions", {
                 method: "POST",
                 headers: {
                     "Authorization": `Bearer ${apiKey}`,
